@@ -18,6 +18,7 @@ bot = commands.Bot(command_prefix="$", intents=intents)
 
 saved_permissions = {}
 warns = {}
+safe_message_id = {}  # Speichert die ID der Sicherheitsmeldung pro Server
 
 
 # ════════════════════════════════════════════════════════════
@@ -32,11 +33,12 @@ async def send_log(guild, title, description, color=0xFF0000):
                 log_channel = ch
                 break
     if log_channel is None:
-        return
+        return None
     embed = discord.Embed(title=title, description=description, color=color)
     embed.timestamp = datetime.now(timezone.utc)
-    embed.set_footer(text="SafeBot • Made.byMalik")
-    await log_channel.send(embed=embed)
+    embed.set_footer(text="Zero.Trust")
+    msg = await log_channel.send(embed=embed)
+    return msg
 
 
 # ════════════════════════════════════════════════════════════
@@ -45,7 +47,7 @@ async def send_log(guild, title, description, color=0xFF0000):
 
 @bot.event
 async def on_ready():
-    print(f"✅ SafeBot ist online als {bot.user}")
+    print(f"✅ Zero.Trust ist online als {bot.user}")
     print(f"   Prefix: $")
     print(f"   Log-Kanal ID: {LOG_CHANNEL_ID}")
 
@@ -93,27 +95,32 @@ async def safe_mode(ctx, *, reason: str = "Kein Grund angegeben"):
     embed = discord.Embed(
         title="🚨 SICHERHEITSMODUS AKTIVIERT",
         description=(
-            f"**Grund:** {reason}\n\n"
+            f"**Grund:** **{reason}**\n\n"
             f"**Was gesperrt wurde:**\n"
             f"> 🔇 Alle Textkanäle gesperrt\n"
             f"> 🔕 Alle Voice-Kanäle gesperrt\n"
             f"> 🚫 Alle Einladungen gelöscht\n"
             f"> ❌ Reaktionen deaktiviert\n\n"
             f"**Aktiviert von:** {ctx.author.mention}\n"
-            f"**Um:** <t:{int(datetime.now().timestamp())}:F>\n\n"
-            f"ℹ️ Nutze `$Unsave` um den Sicherheitsmodus aufzuheben."
+            f"**Um:** <t:{int(datetime.now().timestamp())}:F>"
         ),
         color=0xFF0000
     )
-    embed.set_footer(text="SafeBot • Made.byMalik")
+    embed.set_footer(text="Zero.Trust")
     embed.timestamp = datetime.now(timezone.utc)
 
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
-        await log_channel.send("@everyone", embed=embed)
+        safe_msg = await log_channel.send("@everyone", embed=embed)
+        safe_message_id[guild.id] = (log_channel.id, safe_msg.id)
     else:
-        await ctx.channel.send(embed=embed)
+        safe_msg = await ctx.channel.send(embed=embed)
+        safe_message_id[guild.id] = (ctx.channel.id, safe_msg.id)
 
+
+# ════════════════════════════════════════════════════════════
+#  🔓 UNSAVE – Sicherheitsmeldung löschen
+# ════════════════════════════════════════════════════════════
 
 @bot.command(name="Unsave")
 @commands.has_permissions(administrator=True)
@@ -139,18 +146,30 @@ async def unsave(ctx, *, reason: str = "Sicherheitsmodus beendet"):
             except Exception:
                 pass
 
+    # Sicherheitsmeldung löschen
+    if guild.id in safe_message_id:
+        ch_id, msg_id = safe_message_id[guild.id]
+        try:
+            ch = bot.get_channel(ch_id)
+            if ch:
+                old_msg = await ch.fetch_message(msg_id)
+                await old_msg.delete()
+        except Exception:
+            pass
+        safe_message_id.pop(guild.id)
+
     await msg.delete()
 
     embed = discord.Embed(
         title="✅ SICHERHEITSMODUS AUFGEHOBEN",
         description=(
-            f"**Grund:** {reason}\n\n"
+            f"**Grund:** **{reason}**\n\n"
             f"**Aufgehoben von:** {ctx.author.mention}\n"
             f"**Um:** <t:{int(datetime.now().timestamp())}:F>"
         ),
         color=0x00FF00
     )
-    embed.set_footer(text="SafeBot • Made.byMalik")
+    embed.set_footer(text="Zero.Trust")
     embed.timestamp = datetime.now(timezone.utc)
 
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
@@ -170,12 +189,12 @@ async def lock(ctx, *, reason: str = "Kein Grund angegeben"):
     await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=False)
     embed = discord.Embed(
         title="🔒 Kanal gesperrt",
-        description=f"**Kanal:** {ctx.channel.mention}\n**Grund:** {reason}\n**Von:** {ctx.author.mention}",
+        description=f"**Kanal:** {ctx.channel.mention}\n**Grund:** **{reason}**\n**Von:** {ctx.author.mention}",
         color=0xFF0000
     )
-    embed.set_footer(text="SafeBot • Made.byMalik")
+    embed.set_footer(text="Zero.Trust")
     await ctx.send(embed=embed)
-    await send_log(ctx.guild, "🔒 Kanal gesperrt", f"{ctx.channel.mention} gesperrt.\nGrund: {reason}\nVon: {ctx.author.mention}", 0xFF0000)
+    await send_log(ctx.guild, "🔒 Kanal gesperrt", f"{ctx.channel.mention} gesperrt.\n**Grund:** **{reason}**\nVon: {ctx.author.mention}", 0xFF0000)
 
 
 @bot.command(name="unlock")
@@ -206,15 +225,15 @@ async def quit_cmd(ctx, member: discord.Member, *, reason: str = "Kein Grund ang
         title="🔇 Text gesperrt",
         description=(
             f"**User:** {member.mention}\n"
-            f"**Grund:** {reason}\n"
+            f"**Grund:** **{reason}**\n"
             f"**Von:** {ctx.author.mention}\n\n"
             f"ℹ️ Der User kann noch Voice-Kanäle benutzen."
         ),
         color=0xFFA500
     )
-    embed.set_footer(text="SafeBot • Made.byMalik")
+    embed.set_footer(text="Zero.Trust")
     await ctx.send(embed=embed)
-    await send_log(ctx.guild, "🔇 Text-Mute", f"{member.mention} stummgeschaltet (Text).\nGrund: {reason}\nVon: {ctx.author.mention}", 0xFFA500)
+    await send_log(ctx.guild, "🔇 Text-Mute", f"{member.mention} stummgeschaltet (Text).\n**Grund:** **{reason}**\nVon: {ctx.author.mention}", 0xFFA500)
 
     try:
         await member.send(f"🔇 Du wurdest auf **{ctx.guild.name}** stummgeschaltet (Text).\nGrund: {reason}")
@@ -256,15 +275,15 @@ async def fullmute(ctx, member: discord.Member, *, reason: str = "Kein Grund ang
         title="🔇 Vollständig stummgeschaltet",
         description=(
             f"**User:** {member.mention}\n"
-            f"**Grund:** {reason}\n"
+            f"**Grund:** **{reason}**\n"
             f"**Von:** {ctx.author.mention}\n\n"
             f"❌ Kein Text, kein Voice."
         ),
         color=0xFF0000
     )
-    embed.set_footer(text="SafeBot • Made.byMalik")
+    embed.set_footer(text="Zero.Trust")
     await ctx.send(embed=embed)
-    await send_log(ctx.guild, "🔇 Full-Mute", f"{member.mention} vollständig stummgeschaltet.\nGrund: {reason}\nVon: {ctx.author.mention}", 0xFF0000)
+    await send_log(ctx.guild, "🔇 Full-Mute", f"{member.mention} vollständig stummgeschaltet.\n**Grund:** **{reason}**\nVon: {ctx.author.mention}", 0xFF0000)
 
     try:
         await member.send(f"🔇 Du wurdest auf **{ctx.guild.name}** vollständig stummgeschaltet.\nGrund: {reason}")
@@ -309,12 +328,12 @@ async def timeout_cmd(ctx, member: discord.Member, duration: str, *, reason: str
 
     embed = discord.Embed(
         title="⏱️ Timeout",
-        description=f"**User:** {member.mention}\n**Dauer:** {label}\n**Grund:** {reason}\n**Von:** {ctx.author.mention}",
+        description=f"**User:** {member.mention}\n**Dauer:** {label}\n**Grund:** **{reason}**\n**Von:** {ctx.author.mention}",
         color=0xFFA500
     )
-    embed.set_footer(text="SafeBot • Made.byMalik")
+    embed.set_footer(text="Zero.Trust")
     await ctx.send(embed=embed)
-    await send_log(ctx.guild, "⏱️ Timeout", f"{member.mention} für {label} getimeouted.\nGrund: {reason}\nVon: {ctx.author.mention}", 0xFFA500)
+    await send_log(ctx.guild, "⏱️ Timeout", f"{member.mention} für {label} getimeouted.\n**Grund:** **{reason}**\nVon: {ctx.author.mention}", 0xFFA500)
 
 
 @bot.command(name="untimeout")
@@ -322,7 +341,7 @@ async def timeout_cmd(ctx, member: discord.Member, duration: str, *, reason: str
 async def untimeout_cmd(ctx, member: discord.Member):
     await member.timeout(None)
     await ctx.send(f"✅ Timeout von **{member.display_name}** aufgehoben.")
-    await send_log(ctx.guild, "✅ Timeout aufgehoben", f"{member.mention} von {ctx.author.mention} freigegeben.", 0x00FF00)
+    await send_log(ctx.guild, "✅ Timeout aufgehoben", f"{member.mention} freigegeben von {ctx.author.mention}", 0x00FF00)
 
 
 # ════════════════════════════════════════════════════════════
@@ -335,12 +354,12 @@ async def kick(ctx, member: discord.Member, *, reason: str = "Kein Grund angegeb
     await member.kick(reason=reason)
     embed = discord.Embed(
         title="👢 Kick",
-        description=f"**User:** {member.mention}\n**Grund:** {reason}\n**Von:** {ctx.author.mention}",
+        description=f"**User:** {member.mention}\n**Grund:** **{reason}**\n**Von:** {ctx.author.mention}",
         color=0xFFA500
     )
-    embed.set_footer(text="SafeBot • Made.byMalik")
+    embed.set_footer(text="Zero.Trust")
     await ctx.send(embed=embed)
-    await send_log(ctx.guild, "👢 Kick", f"{member} gekickt.\nGrund: {reason}\nVon: {ctx.author.mention}", 0xFFA500)
+    await send_log(ctx.guild, "👢 Kick", f"{member} gekickt.\n**Grund:** **{reason}**\nVon: {ctx.author.mention}", 0xFFA500)
 
 
 @bot.command(name="ban")
@@ -349,12 +368,12 @@ async def ban(ctx, member: discord.Member, *, reason: str = "Kein Grund angegebe
     await member.ban(reason=reason)
     embed = discord.Embed(
         title="🔨 Ban",
-        description=f"**User:** {member.mention}\n**Grund:** {reason}\n**Von:** {ctx.author.mention}",
+        description=f"**User:** {member.mention}\n**Grund:** **{reason}**\n**Von:** {ctx.author.mention}",
         color=0xFF0000
     )
-    embed.set_footer(text="SafeBot • Made.byMalik")
+    embed.set_footer(text="Zero.Trust")
     await ctx.send(embed=embed)
-    await send_log(ctx.guild, "🔨 Ban", f"{member} gebannt.\nGrund: {reason}\nVon: {ctx.author.mention}", 0xFF0000)
+    await send_log(ctx.guild, "🔨 Ban", f"{member} gebannt.\n**Grund:** **{reason}**\nVon: {ctx.author.mention}", 0xFF0000)
 
 
 @bot.command(name="unban")
@@ -370,7 +389,7 @@ async def unban(ctx, *, username: str):
 
 
 # ════════════════════════════════════════════════════════════
-#  ⚠️ WARN SYSTEM (ohne Auto-Aktionen)
+#  ⚠️ WARN SYSTEM
 # ════════════════════════════════════════════════════════════
 
 @bot.command(name="warn")
@@ -387,12 +406,12 @@ async def warn(ctx, member: discord.Member, *, reason: str = "Kein Grund angegeb
 
     embed = discord.Embed(
         title="⚠️ Verwarnung",
-        description=f"**User:** {member.mention}\n**Grund:** {reason}\n**Von:** {ctx.author.mention}\n**Verwarnungen gesamt:** {count}",
+        description=f"**User:** {member.mention}\n**Grund:** **{reason}**\n**Von:** {ctx.author.mention}\n**Verwarnungen gesamt:** {count}",
         color=0xFFFF00
     )
-    embed.set_footer(text="SafeBot • Made.byMalik")
+    embed.set_footer(text="Zero.Trust")
     await ctx.send(embed=embed)
-    await send_log(ctx.guild, "⚠️ Warn", f"{member.mention} verwarnt ({count}x).\nGrund: {reason}\nVon: {ctx.author.mention}", 0xFFFF00)
+    await send_log(ctx.guild, "⚠️ Warn", f"{member.mention} verwarnt ({count}x).\n**Grund:** **{reason}**\nVon: {ctx.author.mention}", 0xFFFF00)
 
     try:
         await member.send(f"⚠️ Du wurdest auf **{ctx.guild.name}** verwarnt!\nGrund: {reason}\nVerwarnungen: {count}")
@@ -473,7 +492,7 @@ async def userinfo(ctx, member: discord.Member = None):
     embed.add_field(name="Rollen", value=", ".join([r.mention for r in member.roles[1:]]) or "Keine", inline=False)
     embed.add_field(name="Verwarnungen", value=len(user_warns), inline=True)
     embed.add_field(name="Bot?", value="✅" if member.bot else "❌", inline=True)
-    embed.set_footer(text="SafeBot • Made.byMalik")
+    embed.set_footer(text="Zero.Trust")
     await ctx.send(embed=embed)
 
 
@@ -489,7 +508,7 @@ async def serverinfo(ctx):
     embed.add_field(name="Rollen", value=len(guild.roles), inline=True)
     embed.add_field(name="Erstellt", value=f"<t:{int(guild.created_at.timestamp())}:R>", inline=True)
     embed.add_field(name="Owner", value=guild.owner.mention, inline=True)
-    embed.set_footer(text="SafeBot • Made.byMalik")
+    embed.set_footer(text="Zero.Trust")
     await ctx.send(embed=embed)
 
 
@@ -526,7 +545,7 @@ async def removerole(ctx, member: discord.Member, *, role_name: str):
 async def announce(ctx, *, text: str):
     await ctx.message.delete()
     embed = discord.Embed(title="📢 Ankündigung", description=text, color=0x5865F2)
-    embed.set_footer(text=f"Von {ctx.author.display_name} • SafeBot • Made.byMalik")
+    embed.set_footer(text=f"Von {ctx.author.display_name} • Zero.Trust")
     embed.timestamp = datetime.now(timezone.utc)
     await ctx.send(embed=embed)
 
@@ -534,7 +553,6 @@ async def announce(ctx, *, text: str):
 @bot.command(name="dm")
 @commands.has_permissions(manage_messages=True)
 async def dm(ctx, member: discord.Member, *, message: str):
-    """Schickt einem User eine DM vom Bot."""
     await ctx.message.delete()
     try:
         embed = discord.Embed(
@@ -542,7 +560,7 @@ async def dm(ctx, member: discord.Member, *, message: str):
             description=message,
             color=0x5865F2
         )
-        embed.set_footer(text="SafeBot • Made.byMalik")
+        embed.set_footer(text="Zero.Trust")
         await member.send(embed=embed)
         await ctx.send(f"✅ DM an **{member.display_name}** gesendet.", delete_after=5)
     except Exception:
@@ -550,18 +568,17 @@ async def dm(ctx, member: discord.Member, *, message: str):
 
 
 # ════════════════════════════════════════════════════════════
-#  🔇 VOICE KICK
+#  🔊 VOICE KICK
 # ════════════════════════════════════════════════════════════
 
 @bot.command(name="vckick")
 @commands.has_permissions(move_members=True)
 async def vckick(ctx, member: discord.Member, *, reason: str = "Kein Grund angegeben"):
-    """Kickt einen User aus dem Voice-Channel."""
     if member.voice is None:
         return await ctx.send("❌ User ist in keinem Voice-Channel.")
     await member.move_to(None, reason=reason)
-    await ctx.send(f"🔊 **{member.display_name}** wurde aus dem Voice-Channel gekickt.\n📝 Grund: {reason}")
-    await send_log(ctx.guild, "🔊 VC-Kick", f"{member.mention} aus VC gekickt.\nGrund: {reason}\nVon: {ctx.author.mention}", 0xFFA500)
+    await ctx.send(f"🔊 **{member.display_name}** wurde aus dem Voice-Channel gekickt.\n📝 **Grund:** **{reason}**")
+    await send_log(ctx.guild, "🔊 VC-Kick", f"{member.mention} aus VC gekickt.\n**Grund:** **{reason}**\nVon: {ctx.author.mention}", 0xFFA500)
 
 
 # ════════════════════════════════════════════════════════════
@@ -571,7 +588,6 @@ async def vckick(ctx, member: discord.Member, *, reason: str = "Kein Grund angeg
 @bot.command(name="nick")
 @commands.has_permissions(manage_nicknames=True)
 async def nick(ctx, member: discord.Member, *, nickname: str = None):
-    """Ändert den Nickname eines Users."""
     old_nick = member.display_name
     await member.edit(nick=nickname)
     if nickname:
@@ -581,12 +597,42 @@ async def nick(ctx, member: discord.Member, *, nickname: str = None):
 
 
 # ════════════════════════════════════════════════════════════
+#  ℹ️ INFO
+# ════════════════════════════════════════════════════════════
+
+@bot.command(name="info")
+@commands.has_permissions(administrator=True)
+async def info(ctx):
+    await ctx.message.delete()
+    embed = discord.Embed(
+        title="Zero.Trust",
+        description=(
+            "**Kein Vertrauen. Keine Ausnahmen. Keine Kompromisse.**\n\n"
+            "Ein kompromissloser Sicherheits- und Moderations-Bot der nach einem einzigen Prinzip handelt: "
+            "Vertraue niemandem. Egal ob Raid, Spam oder Regelverstöße — Zero.Trust reagiert sofort, "
+            "protokolliert alles öffentlich und gibt Admins die volle Kontrolle über ihren Server. "
+            "Jede Aktion wird mit Grund dokumentiert, damit die gesamte Community informiert bleibt.\n\n"
+            "**Kernfunktionen:**\n"
+            "> 🔒 Raid Protection — Server auf Knopfdruck komplett sperren\n"
+            "> 🔇 Moderation — Warn, Mute, Timeout, Kick, Ban\n"
+            "> 🎙️ Voice Control — Text & Voice separat sperren\n"
+            "> 📋 Public Log — Jede Aktion öffentlich dokumentiert\n\n"
+            "Prefix: `$` • Nutze `$hilfe` für alle Befehle"
+        ),
+        color=0x2B2D31
+    )
+    embed.set_footer(text="Built by Code-byMalik • Zero.Trust v1.0")
+    embed.timestamp = datetime.now(timezone.utc)
+    await ctx.send(embed=embed)
+
+
+# ════════════════════════════════════════════════════════════
 #  📋 HILFE
 # ════════════════════════════════════════════════════════════
 
 @bot.command(name="hilfe")
 async def hilfe(ctx):
-    embed = discord.Embed(title="📋 SafeBot Befehle", description="Prefix: `$`", color=0x5865F2)
+    embed = discord.Embed(title="📋 Zero.Trust Befehle", description="Prefix: `$`", color=0x2B2D31)
 
     embed.add_field(name="🔒 Sicherheit", value="""
 `$Safe <Grund>` – Server komplett sperren
@@ -623,9 +669,10 @@ async def hilfe(ctx):
 `$announce <Text>` – Ankündigung
 `$userinfo @User` – User Info
 `$serverinfo` – Server Info
+`$info` – Bot Info (nur Admins)
 """, inline=False)
 
-    embed.set_footer(text="SafeBot • Made.byMalik")
+    embed.set_footer(text="Zero.Trust • Built by Code-byMalik")
     await ctx.send(embed=embed)
 
 
