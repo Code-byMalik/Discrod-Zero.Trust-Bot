@@ -6,21 +6,31 @@ import asyncio
 
 # ============================================================
 #  KONFIGURATION – Railway Variables:
-#  BOT_TOKEN        = dein Bot Token
-#  LOG_CHANNEL      = ID des öffentlichen Sicherheitskanals
-#  IGNORE_CHANNEL   = ID des Bot-Kanals der NICHT gesperrt wird
+#  BOT_TOKEN         = dein Bot Token
+#  LOG_CHANNEL       = ID des öffentlichen Sicherheitskanals
+#  IGNORE_CHANNEL_1  = ID von Kanal 1 der ignoriert wird
+#  IGNORE_CHANNEL_2  = ID von Kanal 2 der ignoriert wird
+#  IGNORE_CHANNEL_3  = ID von Kanal 3 der ignoriert wird
+#  IGNORE_CHANNEL_4  = ID von Kanal 4 der ignoriert wird
 # ============================================================
 
-TOKEN             = os.environ.get("BOT_TOKEN")
-LOG_CHANNEL_ID    = int(os.environ.get("LOG_CHANNEL", "0"))
-IGNORE_CHANNEL_ID = int(os.environ.get("IGNORE_CHANNEL", "0"))
+TOKEN          = os.environ.get("BOT_TOKEN")
+LOG_CHANNEL_ID = int(os.environ.get("LOG_CHANNEL", "0"))
+
+IGNORE_CHANNELS = set(filter(lambda x: x != 0, [
+    int(os.environ.get("IGNORE_CHANNEL_1", "0")),
+    int(os.environ.get("IGNORE_CHANNEL_2", "0")),
+    int(os.environ.get("IGNORE_CHANNEL_3", "0")),
+    int(os.environ.get("IGNORE_CHANNEL_4", "0")),
+]))
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="$", intents=intents)
 
-saved_permissions = {}
 warns = {}
-safe_message_id = {}
+safe_message_id = {}       # guild_id -> (log_channel_id, log_msg_id)
+channel_safe_msgs = {}     # guild_id -> list of (channel_id, msg_id)
+safe_active = {}           # guild_id -> {"reason": str, "by": str, "time": datetime, "locked": [ch_names]}
 
 
 # ════════════════════════════════════════════════════════════
@@ -52,7 +62,7 @@ async def on_ready():
     print(f"✅ Zero.Trust ist online als {bot.user}")
     print(f"   Prefix: $")
     print(f"   Log-Kanal ID: {LOG_CHANNEL_ID}")
-    print(f"   Ignorierter Kanal: {IGNORE_CHANNEL_ID}")
+    print(f"   Ignorierte Kanäle: {IGNORE_CHANNELS}")
 
 
 # ════════════════════════════════════════════════════════════
@@ -66,10 +76,13 @@ async def safe_mode(ctx, *, reason: str = "Kein Grund angegeben"):
     msg = await ctx.send("🔒 Aktiviere Sicherheitsmodus...")
 
     guild = ctx.guild
+    locked_channels = []
+    channel_msgs = []
 
     for channel in guild.channels:
-        if channel.id == IGNORE_CHANNEL_ID:
+        if channel.id in IGNORE_CHANNELS:
             continue
+
         overwrite = discord.PermissionOverwrite(
             send_messages=False,
             connect=False,
@@ -79,6 +92,21 @@ async def safe_mode(ctx, *, reason: str = "Kein Grund angegeben"):
         )
         try:
             await channel.set_permissions(guild.default_role, overwrite=overwrite)
+            locked_channels.append(channel.name)
+
+            # #Safe Nachricht in jeden Text-Kanal schicken
+            if isinstance(channel, discord.TextChannel):
+                try:
+                    safe_embed = discord.Embed(
+                        title="🔒 GESPERRT",
+                        description=f"Dieser Kanal wurde gesperrt.\n**Grund:** **{reason}**",
+                        color=0xFF0000
+                    )
+                    safe_embed.set_footer(text="Zero.Trust")
+                    ch_msg = await channel.send(embed=safe_embed)
+                    channel_msgs.append((channel.id, ch_msg.id))
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -88,6 +116,14 @@ async def safe_mode(ctx, *, reason: str = "Kein Grund angegeben"):
             await invite.delete()
     except Exception:
         pass
+
+    channel_safe_msgs[guild.id] = channel_msgs
+    safe_active[guild.id] = {
+        "reason": reason,
+        "by": str(ctx.author),
+        "time": datetime.now(timezone.utc),
+        "locked": locked_channels
+    }
 
     await msg.delete()
 
@@ -128,15 +164,28 @@ async def unsave(ctx, *, reason: str = "Sicherheitsmodus beendet"):
     guild = ctx.guild
     msg = await ctx.send("🔓 Hebe Sicherheitsmodus auf...")
 
+    # Kanäle entsperren
     for channel in guild.channels:
-        if channel.id == IGNORE_CHANNEL_ID:
+        if channel.id in IGNORE_CHANNELS:
             continue
         try:
             await channel.set_permissions(guild.default_role, overwrite=None)
         except Exception:
             pass
 
-    # Sicherheitsmeldung löschen
+    # #Safe Nachrichten aus allen Kanälen löschen
+    if guild.id in channel_safe_msgs:
+        for ch_id, msg_id in channel_safe_msgs[guild.id]:
+            try:
+                ch = bot.get_channel(ch_id)
+                if ch:
+                    old_msg = await ch.fetch_message(msg_id)
+                    await old_msg.delete()
+            except Exception:
+                pass
+        channel_safe_msgs.pop(guild.id)
+
+    # Log-Sicherheitsmeldung löschen
     if guild.id in safe_message_id:
         ch_id, msg_id = safe_message_id[guild.id]
         try:
@@ -148,6 +197,7 @@ async def unsave(ctx, *, reason: str = "Sicherheitsmodus beendet"):
             pass
         safe_message_id.pop(guild.id)
 
+    safe_active.pop(guild.id, None)
     await msg.delete()
 
     embed = discord.Embed(
@@ -177,6 +227,77 @@ async def unsave(ctx, *, reason: str = "Sicherheitsmodus beendet"):
             await unsave_msg.delete()
         except Exception:
             pass
+
+
+# ════════════════════════════════════════════════════════════
+#  📊 STATUS CMD
+# ════════════════════════════════════════════════════════════
+
+@bot.command(name="status")
+@commands.has_permissions(manage_messages=True)
+async def status(ctx):
+    guild = ctx.guild
+    guild_id = guild.id
+
+    if guild_id in safe_active:
+        data = safe_active[guild_id]
+        since = data["time"]
+        locked = data["locked"]
+
+        embed = discord.Embed(
+            title="🔴 SICHERHEITSMODUS AKTIV",
+            color=0xFF0000
+        )
+        embed.add_field(
+            name="📋 Details",
+            value=(
+                f"**Grund:** **{data['reason']}**\n"
+                f"**Aktiviert von:** {data['by']}\n"
+                f"**Seit:** <t:{int(since.timestamp())}:R>"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name=f"🔒 Gesperrte Kanäle ({len(locked)})",
+            value="\n".join([f"> #{ch}" for ch in locked[:15]]) + ("\n> ..." if len(locked) > 15 else ""),
+            inline=False
+        )
+        embed.add_field(
+            name="⚙️ Was gesperrt ist",
+            value=(
+                "> 🔇 Schreiben gesperrt\n"
+                "> 🔕 Voice gesperrt\n"
+                "> 🚫 Einladungen gelöscht\n"
+                "> ❌ Reaktionen gesperrt"
+            ),
+            inline=False
+        )
+        embed.set_footer(text="Zero.Trust • Nutze $Unsave <Grund> um aufzuheben")
+    else:
+        embed = discord.Embed(
+            title="🟢 NORMALMODUS AKTIV",
+            description="Der Server ist nicht gesperrt.\nAlle Kanäle sind öffentlich zugänglich.",
+            color=0x00FF00
+        )
+        embed.add_field(
+            name="⚙️ Aktueller Status",
+            value=(
+                "> ✅ Schreiben erlaubt\n"
+                "> ✅ Voice erlaubt\n"
+                "> ✅ Einladungen erlaubt\n"
+                "> ✅ Reaktionen erlaubt"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name=f"🚫 Ignorierte Kanäle ({len(IGNORE_CHANNELS)})",
+            value="\n".join([f"> <#{ch_id}>" for ch_id in IGNORE_CHANNELS]) if IGNORE_CHANNELS else "> Keine",
+            inline=False
+        )
+        embed.set_footer(text="Zero.Trust • Nutze $Safe <Grund> um zu sperren")
+
+    embed.timestamp = datetime.now(timezone.utc)
+    await ctx.send(embed=embed)
 
 
 # ════════════════════════════════════════════════════════════
@@ -220,7 +341,6 @@ async def quit_cmd(ctx, member: discord.Member, *, reason: str = "Kein Grund ang
                 await channel.set_permissions(role, send_messages=False, add_reactions=False)
 
     await member.add_roles(role, reason=reason)
-
     embed = discord.Embed(
         title="🔇 Text gesperrt",
         description=(
@@ -234,7 +354,6 @@ async def quit_cmd(ctx, member: discord.Member, *, reason: str = "Kein Grund ang
     embed.set_footer(text="Zero.Trust")
     await ctx.send(embed=embed)
     await send_log(ctx.guild, "🔇 Text-Mute", f"{member.mention} stummgeschaltet (Text).\n**Grund:** **{reason}**\nVon: {ctx.author.mention}", 0xFFA500)
-
     try:
         await member.send(f"🔇 Du wurdest auf **{ctx.guild.name}** stummgeschaltet (Text).\nGrund: {reason}")
     except Exception:
@@ -270,7 +389,6 @@ async def fullmute(ctx, member: discord.Member, *, reason: str = "Kein Grund ang
                 await channel.set_permissions(role, speak=False, connect=False)
 
     await member.add_roles(role, reason=reason)
-
     embed = discord.Embed(
         title="🔇 Vollständig stummgeschaltet",
         description=(
@@ -284,7 +402,6 @@ async def fullmute(ctx, member: discord.Member, *, reason: str = "Kein Grund ang
     embed.set_footer(text="Zero.Trust")
     await ctx.send(embed=embed)
     await send_log(ctx.guild, "🔇 Full-Mute", f"{member.mention} vollständig stummgeschaltet.\n**Grund:** **{reason}**\nVon: {ctx.author.mention}", 0xFF0000)
-
     try:
         await member.send(f"🔇 Du wurdest auf **{ctx.guild.name}** vollständig stummgeschaltet.\nGrund: {reason}")
     except Exception:
@@ -325,7 +442,6 @@ async def timeout_cmd(ctx, member: discord.Member, duration: str, *, reason: str
 
     until = datetime.now(timezone.utc) + delta
     await member.timeout(until, reason=reason)
-
     embed = discord.Embed(
         title="⏱️ Timeout",
         description=f"**User:** {member.mention}\n**Dauer:** {label}\n**Grund:** **{reason}**\n**Von:** {ctx.author.mention}",
@@ -412,7 +528,6 @@ async def warn(ctx, member: discord.Member, *, reason: str = "Kein Grund angegeb
     embed.set_footer(text="Zero.Trust")
     await ctx.send(embed=embed)
     await send_log(ctx.guild, "⚠️ Warn", f"{member.mention} verwarnt ({count}x).\n**Grund:** **{reason}**\nVon: {ctx.author.mention}", 0xFFFF00)
-
     try:
         await member.send(f"⚠️ Du wurdest auf **{ctx.guild.name}** verwarnt!\nGrund: {reason}\nVerwarnungen: {count}")
     except Exception:
@@ -636,6 +751,7 @@ async def hilfe(ctx):
     embed.add_field(name="🔒 Sicherheit", value="""
 `$Safe <Grund>` – Server komplett sperren
 `$Unsave <Grund>` – Server entsperren
+`$status` – Aktuellen Modus anzeigen
 `$lock <Grund>` – Kanal sperren
 `$unlock` – Kanal entsperren
 """, inline=False)
