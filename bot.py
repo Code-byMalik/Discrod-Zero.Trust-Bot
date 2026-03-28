@@ -12,6 +12,7 @@ import asyncio
 
 TOKEN          = os.environ.get("BOT_TOKEN")
 LOG_CHANNEL_ID = int(os.environ.get("LOG_CHANNEL", "0"))
+IGNORE_CHANNEL_ID = int(os.environ.get("IGNORE_CHANNEL", "0"))
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="$", intents=intents)
@@ -64,7 +65,9 @@ async def safe_mode(ctx, *, reason: str = "Kein Grund angegeben"):
 
     guild = ctx.guild
 
-    for channel in guild.channels:
+  for channel in guild.channels:
+        if channel.id == IGNORE_CHANNEL_ID:
+            continue  # Bot-Kanal überspringen
         overwrite = discord.PermissionOverwrite(
             send_messages=False,
             connect=False,
@@ -116,7 +119,7 @@ async def safe_mode(ctx, *, reason: str = "Kein Grund angegeben"):
 #  🔓 UNSAVE
 # ════════════════════════════════════════════════════════════
 
-@bot.command(name="Unsave")
+@bot.command(name="Unsafe")
 @commands.has_permissions(administrator=True)
 async def unsave(ctx, *, reason: str = "Sicherheitsmodus beendet"):
     await ctx.message.delete()
@@ -125,6 +128,8 @@ async def unsave(ctx, *, reason: str = "Sicherheitsmodus beendet"):
 
     # Alle @everyone Overwrites komplett zurücksetzen
     for channel in guild.channels:
+        if channel.id == IGNORE_CHANNEL_ID:
+            continue  # Bot-Kanal überspringen
         try:
             await channel.set_permissions(guild.default_role, overwrite=None)
         except Exception:
