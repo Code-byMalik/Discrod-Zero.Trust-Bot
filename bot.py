@@ -18,7 +18,7 @@ bot = commands.Bot(command_prefix="$", intents=intents)
 
 saved_permissions = {}
 warns = {}
-safe_message_id = {}  # Speichert die ID der Sicherheitsmeldung pro Server
+safe_message_id = {}
 
 
 # ════════════════════════════════════════════════════════════
@@ -63,14 +63,8 @@ async def safe_mode(ctx, *, reason: str = "Kein Grund angegeben"):
     msg = await ctx.send("🔒 Aktiviere Sicherheitsmodus...")
 
     guild = ctx.guild
-    saved_permissions[guild.id] = {}
 
     for channel in guild.channels:
-        saved_permissions[guild.id][channel.id] = {}
-        for role in guild.roles:
-            overwrite = channel.overwrites_for(role)
-            saved_permissions[guild.id][channel.id][role.id] = overwrite
-
         overwrite = discord.PermissionOverwrite(
             send_messages=False,
             connect=False,
@@ -111,7 +105,7 @@ async def safe_mode(ctx, *, reason: str = "Kein Grund angegeben"):
 
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
-        safe_msg = await log_channel.send("@everyone", embed=embed)
+        safe_msg = await log_channel.send(embed=embed)
         safe_message_id[guild.id] = (log_channel.id, safe_msg.id)
     else:
         safe_msg = await ctx.channel.send(embed=embed)
@@ -119,7 +113,7 @@ async def safe_mode(ctx, *, reason: str = "Kein Grund angegeben"):
 
 
 # ════════════════════════════════════════════════════════════
-#  🔓 UNSAVE – Sicherheitsmeldung löschen
+#  🔓 UNSAVE
 # ════════════════════════════════════════════════════════════
 
 @bot.command(name="Unsave")
@@ -129,22 +123,12 @@ async def unsave(ctx, *, reason: str = "Sicherheitsmodus beendet"):
     guild = ctx.guild
     msg = await ctx.send("🔓 Hebe Sicherheitsmodus auf...")
 
-    if guild.id in saved_permissions:
-        for channel in guild.channels:
-            if channel.id in saved_permissions[guild.id]:
-                for role in guild.roles:
-                    if role.id in saved_permissions[guild.id][channel.id]:
-                        try:
-                            await channel.set_permissions(role, overwrite=saved_permissions[guild.id][channel.id][role.id])
-                        except Exception:
-                            pass
-        saved_permissions.pop(guild.id)
-    else:
-        for channel in guild.channels:
-            try:
-                await channel.set_permissions(guild.default_role, overwrite=None)
-            except Exception:
-                pass
+    # Alle @everyone Overwrites komplett zurücksetzen
+    for channel in guild.channels:
+        try:
+            await channel.set_permissions(guild.default_role, overwrite=None)
+        except Exception:
+            pass
 
     # Sicherheitsmeldung löschen
     if guild.id in safe_message_id:
@@ -174,9 +158,20 @@ async def unsave(ctx, *, reason: str = "Sicherheitsmodus beendet"):
 
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
-        await log_channel.send(embed=embed)
+        unsave_msg = await log_channel.send(embed=embed)
+        # Unsave Meldung nach 5 Sekunden auch löschen
+        await asyncio.sleep(5)
+        try:
+            await unsave_msg.delete()
+        except Exception:
+            pass
     else:
-        await ctx.channel.send(embed=embed)
+        unsave_msg = await ctx.channel.send(embed=embed)
+        await asyncio.sleep(5)
+        try:
+            await unsave_msg.delete()
+        except Exception:
+            pass
 
 
 # ════════════════════════════════════════════════════════════
@@ -633,14 +628,12 @@ async def info(ctx):
 @bot.command(name="hilfe")
 async def hilfe(ctx):
     embed = discord.Embed(title="📋 Zero.Trust Befehle", description="Prefix: `$`", color=0x2B2D31)
-
     embed.add_field(name="🔒 Sicherheit", value="""
 `$Safe <Grund>` – Server komplett sperren
 `$Unsave <Grund>` – Server entsperren
 `$lock <Grund>` – Kanal sperren
 `$unlock` – Kanal entsperren
 """, inline=False)
-
     embed.add_field(name="🔇 Stummschalten", value="""
 `$quit @User <Grund>` – Nur Text sperren (VC erlaubt)
 `$unquit @User` – Text freigeben
@@ -650,7 +643,6 @@ async def hilfe(ctx):
 `$untimeout @User` – Timeout aufheben
 `$vckick @User <Grund>` – Aus Voice-Channel kicken
 """, inline=False)
-
     embed.add_field(name="👮 Moderation", value="""
 `$warn @User <Grund>` – Verwarnen
 `$warnings @User` – Verwarnungen anzeigen
@@ -660,7 +652,6 @@ async def hilfe(ctx):
 `$unban User#1234` – Entbannen
 `$clear 50` – Chat löschen
 """, inline=False)
-
     embed.add_field(name="🎭 Verwaltung", value="""
 `$addrole @User Rollenname` – Rolle geben
 `$removerole @User Rollenname` – Rolle entfernen
@@ -671,7 +662,6 @@ async def hilfe(ctx):
 `$serverinfo` – Server Info
 `$info` – Bot Info (nur Admins)
 """, inline=False)
-
     embed.set_footer(text="Zero.Trust • Built by Code-byMalik")
     await ctx.send(embed=embed)
 
