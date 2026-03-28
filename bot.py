@@ -6,12 +6,13 @@ import asyncio
 
 # ============================================================
 #  KONFIGURATION – Railway Variables:
-#  BOT_TOKEN    = dein Bot Token
-#  LOG_CHANNEL  = ID des öffentlichen Sicherheitskanals
+#  BOT_TOKEN        = dein Bot Token
+#  LOG_CHANNEL      = ID des öffentlichen Sicherheitskanals
+#  IGNORE_CHANNEL   = ID des Bot-Kanals der NICHT gesperrt wird
 # ============================================================
 
-TOKEN          = os.environ.get("BOT_TOKEN")
-LOG_CHANNEL_ID = int(os.environ.get("LOG_CHANNEL", "0"))
+TOKEN             = os.environ.get("BOT_TOKEN")
+LOG_CHANNEL_ID    = int(os.environ.get("LOG_CHANNEL", "0"))
 IGNORE_CHANNEL_ID = int(os.environ.get("IGNORE_CHANNEL", "0"))
 
 intents = discord.Intents.all()
@@ -51,6 +52,7 @@ async def on_ready():
     print(f"✅ Zero.Trust ist online als {bot.user}")
     print(f"   Prefix: $")
     print(f"   Log-Kanal ID: {LOG_CHANNEL_ID}")
+    print(f"   Ignorierter Kanal: {IGNORE_CHANNEL_ID}")
 
 
 # ════════════════════════════════════════════════════════════
@@ -65,9 +67,9 @@ async def safe_mode(ctx, *, reason: str = "Kein Grund angegeben"):
 
     guild = ctx.guild
 
-  for channel in guild.channels:
+    for channel in guild.channels:
         if channel.id == IGNORE_CHANNEL_ID:
-            continue  # Bot-Kanal überspringen
+            continue
         overwrite = discord.PermissionOverwrite(
             send_messages=False,
             connect=False,
@@ -119,17 +121,16 @@ async def safe_mode(ctx, *, reason: str = "Kein Grund angegeben"):
 #  🔓 UNSAVE
 # ════════════════════════════════════════════════════════════
 
-@bot.command(name="Unsafe")
+@bot.command(name="Unsave")
 @commands.has_permissions(administrator=True)
 async def unsave(ctx, *, reason: str = "Sicherheitsmodus beendet"):
     await ctx.message.delete()
     guild = ctx.guild
     msg = await ctx.send("🔓 Hebe Sicherheitsmodus auf...")
 
-    # Alle @everyone Overwrites komplett zurücksetzen
     for channel in guild.channels:
         if channel.id == IGNORE_CHANNEL_ID:
-            continue  # Bot-Kanal überspringen
+            continue
         try:
             await channel.set_permissions(guild.default_role, overwrite=None)
         except Exception:
@@ -164,7 +165,6 @@ async def unsave(ctx, *, reason: str = "Sicherheitsmodus beendet"):
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         unsave_msg = await log_channel.send(embed=embed)
-        # Unsave Meldung nach 5 Sekunden auch löschen
         await asyncio.sleep(5)
         try:
             await unsave_msg.delete()
@@ -635,7 +635,7 @@ async def hilfe(ctx):
     embed = discord.Embed(title="📋 Zero.Trust Befehle", description="Prefix: `$`", color=0x2B2D31)
     embed.add_field(name="🔒 Sicherheit", value="""
 `$Safe <Grund>` – Server komplett sperren
-`$Unsafe <Grund>` – Server entsperren
+`$Unsave <Grund>` – Server entsperren
 `$lock <Grund>` – Kanal sperren
 `$unlock` – Kanal entsperren
 """, inline=False)
