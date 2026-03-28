@@ -630,7 +630,7 @@ async def hilfe(ctx):
     embed = discord.Embed(title="📋 Zero.Trust Befehle", description="Prefix: `$`", color=0x2B2D31)
     embed.add_field(name="🔒 Sicherheit", value="""
 `$Safe <Grund>` – Server komplett sperren
-`$Unsave <Grund>` – Server entsperren
+`$Unsafe <Grund>` – Server entsperren
 `$lock <Grund>` – Kanal sperren
 `$unlock` – Kanal entsperren
 """, inline=False)
